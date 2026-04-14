@@ -1,0 +1,16 @@
+CompileFlags:
+  CompilationDatabase: "build"
+  Add:
+    - "-std=c++17"
+    - "-Wall"
+    - "--gcc-install-dir=/usr/lib/gcc/x86_64-linux-gnu/11"
+
+Index:
+  Background: Build
+
+Diagnostics:
+  UnusedIncludes: Strict
+  Suppress: [unused-parameter]
+
+Documentation:
+  CommentFormat: Doxygen

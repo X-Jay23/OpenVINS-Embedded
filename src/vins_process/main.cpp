@@ -11,6 +11,7 @@
 #include "../common/DataTypes.h"
 #include "../common/IpcManager.h"
 #include "../common/ThreadSafeQueue.h"
+#include "../common/PerformanceLogger.h"
 #include "core/VioManager.h"
 #include "core/VioManagerOptions.h"
 #include "state/State.h"
@@ -41,11 +42,15 @@ void signalHandler(int signum) {
 void imu_read_thread(mqd_t mq, ThreadSafeQueue<ImuDataPacket> *queue) {
   while (!stop_flag) {
     ImuDataPacket packet;
-    ssize_t bytes_read = mq_receive(mq, (char *)&packet, sizeof(packet), NULL);
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += 1; // Wait for at most 1 second
+
+    ssize_t bytes_read = mq_timedreceive(mq, (char *)&packet, sizeof(packet), NULL, &ts);
     if (bytes_read > 0) {
       queue->push(packet);
-    } else if (bytes_read == -1 && errno != EINTR) {
-      perror("mq_receive");
+    } else if (bytes_read == -1 && errno != ETIMEDOUT && errno != EINTR) {
+      perror("mq_timedreceive");
       break;
     }
   }
@@ -79,11 +84,12 @@ void camera_read_thread(sem_t *sem, ShmRingBuffer *ring_buffer, ThreadSafeQueue<
 }
 
 int main(int argc, char **argv) {
-  if (argc < 2) {
-    cerr << "Usage: " << argv[0] << " <path_to_config.yaml>" << endl;
+  if (argc < 3) {
+    cerr << "Usage: " << argv[0] << " <path_to_config.yaml> <log_dir>" << endl;
     return EXIT_FAILURE;
   }
   string config_path = argv[1];
+  string log_dir = argv[2];
 
   signal(SIGINT, signalHandler);
 
@@ -119,7 +125,8 @@ int main(int argc, char **argv) {
   thread cam_thread(camera_read_thread, sem, ring_buffer, &camera_queue);
 
   // Trajectory logging
-  ofstream traj_file("trajectory.txt");
+  ofstream traj_file(log_dir + "/trajectory.txt");
+  PerformanceLogger perf_logger;
 
   cout << "[VINS Process] System ready. Waiting for data..." << endl;
 
@@ -182,7 +189,9 @@ int main(int argc, char **argv) {
     message.images.push_back(cv::Mat(p2.height, p2.width, CV_8UC1, p2.data).clone());
     message.masks.push_back(cv::Mat::zeros(p2.height, p2.width, CV_8UC1));
 
+    perf_logger.start_frame();
     sys->feed_measurement_camera(message);
+    perf_logger.end_frame();
 
     // 5. Log status and trajectory
     if (sys->initialized()) {

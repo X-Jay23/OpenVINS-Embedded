@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 project(open_vins)
 
+
 # 自动生成 compile_commands.json，供 clangd 等语言服务器使用
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -10,7 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enable optimizations
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fsee -fomit-frame-pointer -fno-signed-zeros -fno-math-errno -funroll-loops")
+set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native")
 
 # Dependencies
 find_package(Eigen3 REQUIRED)

@@ -3,166 +3,221 @@ import os
 import argparse
 import pandas as pd
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
-import tempfile
+from scipy.interpolate import interp1d
+from mpl_toolkits.mplot3d import Axes3D
 
-def compute_ate_rpe_numpy(traj_file, gt_file):
+def align_trajectories(model, data, align_scale=False):
     """
-    Compute ATE and RPE using basic numpy instead of full evo pipeline.
-    This acts as a robust fallback.
+    Implementation of the Umeyama algorithm to align individual trajectories.
+    model: estimated trajectory (N, 3)
+    data: ground truth trajectory (N, 3)
     """
-    print("[Evaluation] Calculating ATE/RPE using numpy...")
-    
-    # Load VINS Trajectory (TUM format: sec x y z qx qy qz qw)
-    try:
-        traj_data = np.loadtxt(traj_file)
-        if traj_data.ndim == 1:
-            traj_data = traj_data.reshape(1, -1)
-        traj_ts = traj_data[:, 0]
-        traj_pos = traj_data[:, 1:4]
-    except Exception as e:
-        print(f"Error loading trajectory file: {e}")
-        return None, None
+    if model.shape[0] < 2:
+        return model
         
-    # Load EuroC Ground Truth (ns_timestamp p_RS_R_x p_RS_R_y p_RS_R_z ...)
-    try:
-        gt_df = pd.read_csv(gt_file, comment='#')
-        # EuroC GT columns: #timestamp,p_RS_R_x[m],p_RS_R_y[m],p_RS_R_z[m], q_RS_w[],...
-        gt_ts = gt_df.iloc[:, 0].values / 1e9 # ns to s
-        gt_pos = gt_df.iloc[:, 1:4].values
-    except Exception as e:
-        print(f"Error loading ground truth file: {e}")
-        return None, None
+    model_zerocentered = model - np.mean(model, axis=0)
+    data_zerocentered = data - np.mean(data, axis=0)
 
-    # Temporal Alignment (Nearest neighbor mapping)
-    aligned_traj_pos = []
-    aligned_gt_pos = []
+    # Covariance matrix
+    K = np.dot(data_zerocentered.T, model_zerocentered)
+    U, S, Vt = np.linalg.svd(K)
+    V = Vt.T
     
-    # Very simple alignment: For each estimated timestamp, find the closest GT timestamp
-    for i, t in enumerate(traj_ts):
-        idx = np.abs(gt_ts - t).argmin()
-        if np.abs(gt_ts[idx] - t) < 0.05: # Only associate if within 50ms
-            aligned_traj_pos.append(traj_pos[i])
-            aligned_gt_pos.append(gt_pos[idx])
-            
-    if not aligned_traj_pos:
-        print("Failed to align trajectories.")
-        return None, None
+    # Rotation
+    R = np.dot(U, V.T)
+    if np.linalg.det(R) < 0:
+        S_det = np.eye(3)
+        S_det[2, 2] = -1
+        R = np.dot(np.dot(U, S_det), V.T)
+    
+    # Scale (usually 1.0 for VIO)
+    scale = 1.0
+    if align_scale:
+        var_model = np.var(model_zerocentered)
+        scale = np.trace(np.diag(S)) / (var_model * model.shape[0])
         
-    aligned_traj_pos = np.array(aligned_traj_pos)
-    aligned_gt_pos = np.array(aligned_gt_pos)
+    # Translation
+    t = np.mean(data, axis=0) - scale * np.dot(R, np.mean(model, axis=0))
     
-    # 1. ATE (Absolute Trajectory Error) - RMSE of translation
-    # Note: Proper ATE requires Sim3/SE3 alignment. Here we assume identity alignment 
-    # since VINS should be in the same gravity-aligned Vicon frame as Euroc GT initially.
-    ate_errors = np.linalg.norm(aligned_traj_pos - aligned_gt_pos, axis=1)
-    ate_rmse = np.sqrt(np.mean(ate_errors**2))
-    
-    # 2. RPE (Relative Pose Error) - Translation drift per 1 second step
-    rpe_errors = []
-    fps_approx = 20 # Assuming 20fps for Euroc
-    step = fps_approx * 1 # 1 second steps
-    
-    if len(aligned_traj_pos) > step:
-        for i in range(len(aligned_traj_pos) - step):
-            # Delta pos in estimate
-            delta_est = aligned_traj_pos[i+step] - aligned_traj_pos[i]
-            # Delta pos in GT
-            delta_gt = aligned_gt_pos[i+step] - aligned_gt_pos[i]
-            
-            # Error in delta
-            rpe_err = np.linalg.norm(delta_est - delta_gt)
-            rpe_errors.append(rpe_err)
-            
-    rpe_rmse = np.sqrt(np.mean(np.array(rpe_errors)**2)) if rpe_errors else 0.0
-    
-    return ate_rmse, rpe_rmse
+    # Aligned trajectory
+    model_aligned = scale * np.dot(model, R.T) + t
+    return model_aligned
 
+def compute_metrics(traj_file, gt_file):
+    """ Load, sync, and align trajectories. """
+    print("[Evaluation] Synchronizing and Alinging trajectories...")
+    
+    if not os.path.exists(traj_file) or not os.path.exists(gt_file):
+        print(f"Error: Required files missing. Traj: {os.path.exists(traj_file)}, GT: {os.path.exists(gt_file)}")
+        return None
 
-def plot_metrics(log_dir, traj_file, gt_file, ate, rpe):
+    try:
+        # Load Predict (Estimate) - OpenVINS format
+        try:
+            df_est = pd.read_csv(traj_file, sep=' ', header=None)
+        except:
+            df_est = pd.read_csv(traj_file, sep='\t', header=None)
+        
+        ts_est = df_est.iloc[:, 0].values.astype(float)
+        pos_est = df_est.iloc[:, 1:4].values
+
+        # Load Ground Truth - EuRoC format
+        df_gt = pd.read_csv(gt_file, comment='#', header=None)
+        ts_gt = df_gt.iloc[:, 0].values.astype(float) * 1e-9
+        pos_gt = df_gt.iloc[:, 1:4].values
+
+        # Time Alignment: find common time interval
+        t_start = max(ts_gt[0], ts_est[0])
+        t_end = min(ts_gt[-1], ts_est[-1])
+        
+        if t_start >= t_end:
+            print("Error: No overlapping time interval found.")
+            return None
+
+        # Filter and Interpolate
+        mask_est = (ts_est >= t_start) & (ts_est <= t_end)
+        ts_est_sync = ts_est[mask_est]
+        pos_est_sync = pos_est[mask_est]
+        
+        f_x = interp1d(ts_gt, pos_gt[:, 0], kind='linear', fill_value='extrapolate')
+        f_y = interp1d(ts_gt, pos_gt[:, 1], kind='linear', fill_value='extrapolate')
+        f_z = interp1d(ts_gt, pos_gt[:, 2], kind='linear', fill_value='extrapolate')
+        
+        pos_gt_interp = np.zeros_like(pos_est_sync)
+        pos_gt_interp[:, 0] = f_x(ts_est_sync)
+        pos_gt_interp[:, 1] = f_y(ts_est_sync)
+        pos_gt_interp[:, 2] = f_z(ts_est_sync)
+
+        # Spatial Alignment (Umeyama)
+        pos_est_aligned = align_trajectories(pos_est_sync, pos_gt_interp)
+        
+        # Calculate Errors
+        errors = np.linalg.norm(pos_est_aligned - pos_gt_interp, axis=1)
+        rmse = np.sqrt(np.mean(errors**2))
+        
+        return {
+            'rmse': rmse,
+            'ts': ts_est_sync,
+            'est_aligned': pos_est_aligned,
+            'gt_interp': pos_gt_interp,
+            'errors': errors,
+            'gt_full': pos_gt
+        }
+
+    except Exception as e:
+        print(f"Failed to compute metrics: {e}")
+        return None
+
+def plot_report(log_dir, metrics):
     resource_file = os.path.join(log_dir, "resource.csv")
     pdf_path = os.path.join(log_dir, "performance_report.pdf")
     
-    print(f"[Evaluation] Generating PDF report at: {pdf_path}")
+    print(f"[Evaluation] Generating professional PDF report at: {pdf_path}")
     
     with PdfPages(pdf_path) as pdf:
-        # Plot 1: Resources Monitor
+        # Page 1: Resource Utilization
         if os.path.exists(resource_file):
             df = pd.read_csv(resource_file)
-            
-            # Detect available columns
             core_cols = sorted([c for c in df.columns if c.startswith('cpu_') and c != 'cpu_total' and c != 'cpu_percent'])
             cpu_main_col = 'cpu_total' if 'cpu_total' in df.columns else 'cpu_percent'
             
             num_plots = 4 if core_cols else 3
-            fig, axs = plt.subplots(num_plots, 1, figsize=(10, 4 * num_plots), sharex=True)
+            fig, axs = plt.subplots(num_plots, 1, figsize=(12, 4 * num_plots), sharex=True)
             
-            # Subplot 0: System and Process CPU
+            # Subplot 0: System/Process CPU
             axs[0].plot(df['timestamp'], df[cpu_main_col], color='black', linewidth=1.5, label='Total System CPU')
-            if 'vins_cpu' in df.columns:
-                axs[0].plot(df['timestamp'], df['vins_cpu'], label='VINS Process', alpha=0.8)
-            if 'cam_cpu' in df.columns:
-                axs[0].plot(df['timestamp'], df['cam_cpu'], label='Camera Process', alpha=0.8)
-            if 'imu_cpu' in df.columns:
-                axs[0].plot(df['timestamp'], df['imu_cpu'], label='IMU Process', alpha=0.8)
-            
+            for comp, color in [('vins_cpu', 'royalblue'), ('cam_cpu', 'forestgreen'), ('imu_cpu', 'orange')]:
+                if comp in df.columns:
+                    axs[0].plot(df['timestamp'], df[comp], label=comp.replace('_cpu', '').upper(), alpha=0.7)
             axs[0].set_ylabel('CPU (%)')
             axs[0].legend(loc='upper right', fontsize='small', ncol=2)
             axs[0].grid(True, alpha=0.3)
-            axs[0].set_title('CPU Utilization (System & Components)')
+            axs[0].set_title('System & Process CPU Utilization', fontweight='bold')
 
-            # Subplot 1: Per-Core CPU (if available)
-            plot_idx = 1
+            # Subplot 1: Per-Core (if available)
+            curr = 1
             if core_cols:
                 for col in core_cols:
-                    axs[plot_idx].plot(df['timestamp'], df[col], label=col, alpha=0.7)
-                axs[plot_idx].set_ylabel('CPU (%)')
-                axs[plot_idx].legend(loc='upper right', fontsize='x-small', ncol=min(4, len(core_cols)))
-                axs[plot_idx].grid(True, alpha=0.3)
-                axs[plot_idx].set_title('Per-Core CPU Utilization')
-                plot_idx += 1
+                    axs[curr].plot(df['timestamp'], df[col], label=col, alpha=0.6)
+                axs[curr].set_ylabel('CPU (%)')
+                axs[curr].legend(loc='upper right', fontsize='x-small', ncol=4)
+                axs[curr].grid(True, alpha=0.3)
+                axs[curr].set_title('Per-Core Load Distribution', fontweight='bold')
+                curr += 1
 
             # Subplot: Memory
-            axs[plot_idx].plot(df['timestamp'], df['mem_mb'], color='g', label='VINS Mem (MB)')
-            axs[plot_idx].set_ylabel('Memory (MB)')
-            axs[plot_idx].legend(loc='upper right')
-            axs[plot_idx].grid(True, alpha=0.3)
-            axs[plot_idx].set_title('VINS Process Memory (RSS)')
-            plot_idx += 1
+            axs[curr].plot(df['timestamp'], df['mem_mb'], color='darkgreen', label='VINS RSS Memory')
+            axs[curr].set_ylabel('Memory (MB)')
+            axs[curr].grid(True, alpha=0.3)
+            axs[curr].set_title('Process Memory Usage', fontweight='bold')
+            curr += 1
             
-            # Subplot: Temp and Freq
-            axs[plot_idx].plot(df['timestamp'], df['temp'], color='r', label='Temp (°C)')
-            axs[plot_idx].set_ylabel('Temperature (°C)', color='r')
-            axs[plot_idx].tick_params(axis='y', labelcolor='r')
-            
-            ax2_freq = axs[plot_idx].twinx()
-            ax2_freq.plot(df['timestamp'], df['freq_mhz'], color='orange', linestyle='--', label='Freq (MHz)')
-            ax2_freq.set_ylabel('Frequency (MHz)', color='orange')
-            ax2_freq.tick_params(axis='y', labelcolor='orange')
-            
-            lines, labels = axs[plot_idx].get_legend_handles_labels()
-            lines2, labels2 = ax2_freq.get_legend_handles_labels()
-            ax2_freq.legend(lines + lines2, labels + labels2, loc='upper right', fontsize='small')
-            axs[plot_idx].grid(True, alpha=0.3)
-            axs[plot_idx].set_xlabel('Time (s)')
-            axs[plot_idx].set_title('CPU Temperature and Frequency')
+            # Subplot: Temp & Freq
+            axs[curr].plot(df['timestamp'], df['temp'], color='crimson', label='Temp (°C)')
+            axs[curr].set_ylabel('Temperature (°C)', color='crimson')
+            ax2 = axs[curr].twinx()
+            ax2.plot(df['timestamp'], df['freq_mhz'], color='orange', linestyle='--', label='Freq (MHz)')
+            ax2.set_ylabel('Frequency (MHz)', color='orange')
+            axs[curr].grid(True, alpha=0.3)
+            axs[curr].set_title('Hardware Thermal & Frequency State', fontweight='bold')
             
             plt.tight_layout()
             pdf.savefig(fig)
             plt.close()
+
+        # Page 2: Advanced Trajectory Overview
+        if metrics:
+            fig = plt.figure(figsize=(16, 12))
             
-        # Plot 2: Trajectory Error Summary
-        fig, ax = plt.subplots(figsize=(8, 6))
-        ax.text(0.1, 0.8, "Performance Metrics Summary", fontsize=16, fontweight='bold')
-        if ate is not None and rpe is not None:
-            ax.text(0.1, 0.6, f"Absolute Trajectory Error (ATE RMSE): {ate:.4f} m", fontsize=12)
-            ax.text(0.1, 0.5, f"Relative Pose Error (1s RPE RMSE): {rpe:.4f} m", fontsize=12)
-        else:
-            ax.text(0.1, 0.6, "Failed to calculate trajectory errors.", fontsize=12)
-        ax.axis('off')
-        pdf.savefig(fig)
-        plt.close()
+            # 1. 3D Trajectory
+            ax3d = fig.add_subplot(2, 2, 1, projection='3d')
+            ax3d.plot(metrics['gt_full'][:, 0], metrics['gt_full'][:, 1], metrics['gt_full'][:, 2], 
+                     color='gray', linestyle=':', label='Ground Truth (Full)', alpha=0.4)
+            ax3d.plot(metrics['est_aligned'][:, 0], metrics['est_aligned'][:, 1], metrics['est_aligned'][:, 2], 
+                     color='royalblue', label='VINS Estimate (Aligned)', linewidth=2)
+            ax3d.set_title('3D Trajectory Comparison', fontweight='bold')
+            ax3d.legend(fontsize='small')
+            
+            # 2. XY Plane
+            ax_xy = fig.add_subplot(2, 2, 2)
+            ax_xy.plot(metrics['gt_interp'][:, 0], metrics['gt_interp'][:, 1], color='crimson', linestyle='--', label='Ground Truth', alpha=0.6)
+            ax_xy.plot(metrics['est_aligned'][:, 0], metrics['est_aligned'][:, 1], color='royalblue', label='VINS Estimate', linewidth=2)
+            ax_xy.set_title('XY Plane Projection (Top-down)', fontweight='bold')
+            ax_xy.set_xlabel('X [m]')
+            ax_xy.set_ylabel('Y [m]')
+            ax_xy.axis('equal')
+            ax_xy.grid(True, alpha=0.3)
+            ax_xy.legend(fontsize='small')
+
+            # 3. XZ Plane
+            ax_xz = fig.add_subplot(2, 2, 3)
+            ax_xz.plot(metrics['gt_interp'][:, 0], metrics['gt_interp'][:, 2], color='crimson', linestyle='--', label='Ground Truth', alpha=0.6)
+            ax_xz.plot(metrics['est_aligned'][:, 0], metrics['est_aligned'][:, 2], color='royalblue', label='VINS Estimate', linewidth=2)
+            ax_xz.set_title('XZ Plane Projection (Side-view)', fontweight='bold')
+            ax_xz.set_xlabel('X [m]')
+            ax_xz.set_ylabel('Z [m]')
+            ax_xz.axis('equal')
+            ax_xz.grid(True, alpha=0.3)
+            ax_xz.legend(fontsize='small')
+
+            # 4. ATE Error Curve
+            ax_err = fig.add_subplot(2, 2, 4)
+            time_axis = metrics['ts'] - metrics['ts'][0]
+            ax_err.fill_between(time_axis, metrics['errors'], color='royalblue', alpha=0.2)
+            ax_err.plot(time_axis, metrics['errors'], color='royalblue', linewidth=1)
+            ax_err.set_title('Absolute Trajectory Error (ATE) Over Time', fontweight='bold')
+            ax_err.set_xlabel('Time [s]')
+            ax_err.set_ylabel('Error [m]')
+            ax_err.grid(True, alpha=0.3)
+
+            plt.suptitle(f"Trajectory Accuracy Metrics (ATE RMSE: {metrics['rmse']:.4f} m)", fontsize=16, fontweight='bold')
+            plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+            pdf.savefig(fig)
+            plt.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Evaluate VINS metrics.")
@@ -171,5 +226,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     traj_path = os.path.join(args.log_dir, "trajectory.txt")
-    ate, rpe = compute_ate_rpe_numpy(traj_path, args.gt_file)
-    plot_metrics(args.log_dir, traj_path, args.gt_file, ate, rpe)
+    metrics = compute_metrics(traj_path, args.gt_file)
+    plot_report(args.log_dir, metrics)

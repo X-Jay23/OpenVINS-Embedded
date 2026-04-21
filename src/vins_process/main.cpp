@@ -116,9 +116,9 @@ int main(int argc, char **argv) {
   // Signal readiness via semaphore
   sem_post(ready_sem);
 
-  // Queues for data buffering
-  ThreadSafeQueue<ImuDataPacket> imu_queue;
-  ThreadSafeQueue<CameraDataPacket> camera_queue;
+  // Queues for data buffering (Ring Buffer with fixed capacity)
+  ThreadSafeQueue<ImuDataPacket> imu_queue(2000);
+  ThreadSafeQueue<CameraDataPacket> camera_queue(10);
 
   // Start read threads
   thread imu_thread(imu_read_thread, imu_mq, &imu_queue);

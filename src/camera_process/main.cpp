@@ -76,34 +76,38 @@ int main(int argc, char **argv) {
       this_thread::sleep_for(chrono::duration<double>(elapsed_data_time - elapsed_wall_time));
     }
 
-    cv::Mat image0 = loader.get_image(0, filename0);
-    cv::Mat image1 = loader.get_image(1, filename1);
-    if (image0.empty() || image1.empty())
-      continue;
-
-    // Force overwrite if full to ensure real-time performance
-    if (((ring_buffer->write_idx + 1) % ShmRingBuffer::BUFFER_SIZE) == ring_buffer->read_idx) {
-      ring_buffer->read_idx = (ring_buffer->read_idx + 1) % ShmRingBuffer::BUFFER_SIZE;
+    // --- Stereo-Aware Overwrite Logic ---
+    // Before writing a new pair, ensure we have at least 2 slots.
+    // If we only have 0 or 1 slot left, we must drop the oldest PAIR.
+    int current_count = (ring_buffer->write_idx >= ring_buffer->read_idx) 
+                        ? (ring_buffer->write_idx - ring_buffer->read_idx) 
+                        : (ShmRingBuffer::BUFFER_SIZE - ring_buffer->read_idx + ring_buffer->write_idx);
+    
+    if (current_count >= ShmRingBuffer::BUFFER_SIZE - 2) {
+        // Drop the oldest pair (since BUFFER_SIZE is even, this keeps L/R alignment)
+        ring_buffer->read_idx = (ring_buffer->read_idx + 2) % ShmRingBuffer::BUFFER_SIZE;
     }
+
+    // Use direct decoding into Shared Memory to save a memcpy
     CameraDataPacket &packet0 = ring_buffer->packets[ring_buffer->write_idx];
     packet0.timestamp = timestamp;
     packet0.cam_id = 0;
-    packet0.width = image0.cols;
-    packet0.height = image0.rows;
-    memcpy(packet0.data, image0.data, image0.cols * image0.rows);
+    packet0.width = 752; // EuRoC default
+    packet0.height = 480;
+    cv::Mat dst0(packet0.height, packet0.width, CV_8UC1, packet0.data);
+    if (!loader.get_image_direct(0, filename0, dst0)) continue;
+
     ring_buffer->write_idx = (ring_buffer->write_idx + 1) % ShmRingBuffer::BUFFER_SIZE;
     sem_post(sem);
-
-    // Force overwrite if full to ensure real-time performance
-    if (((ring_buffer->write_idx + 1) % ShmRingBuffer::BUFFER_SIZE) == ring_buffer->read_idx) {
-      ring_buffer->read_idx = (ring_buffer->read_idx + 1) % ShmRingBuffer::BUFFER_SIZE;
-    }
+    
     CameraDataPacket &packet1 = ring_buffer->packets[ring_buffer->write_idx];
     packet1.timestamp = timestamp;
     packet1.cam_id = 1;
-    packet1.width = image1.cols;
-    packet1.height = image1.rows;
-    memcpy(packet1.data, image1.data, image1.cols * image1.rows);
+    packet1.width = 752; // EuRoC default
+    packet1.height = 480;
+    cv::Mat dst1(packet1.height, packet1.width, CV_8UC1, packet1.data);
+    if (!loader.get_image_direct(1, filename1, dst1)) continue;
+
     ring_buffer->write_idx = (ring_buffer->write_idx + 1) % ShmRingBuffer::BUFFER_SIZE;
     sem_post(sem);
   }

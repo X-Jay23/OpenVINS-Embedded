@@ -76,6 +76,24 @@ public:
         return cv::imread(path, cv::IMREAD_GRAYSCALE);
     }
 
+    bool get_image_direct(int cam_id, const std::string& filename, cv::Mat& dst) {
+        std::string path = dataset_path_ + "cam" + std::to_string(cam_id) + "/data/" + filename;
+        
+        // 1. Read file into a buffer
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) return false;
+        std::streamsize size = file.tellg();
+        file.seekg(0, std::ios::beg);
+        
+        std::vector<uchar> buffer(size);
+        if (!file.read((char*)buffer.data(), size)) return false;
+
+        // 2. Decode into preallocated dst
+        // imdecode will reuse memory if size and type match.
+        cv::imdecode(buffer, cv::IMREAD_GRAYSCALE, &dst);
+        return true;
+    }
+
 private:
     std::string dataset_path_;
 };

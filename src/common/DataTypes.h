@@ -41,7 +41,7 @@ struct CameraDataPacket {
  * @brief Ring buffer structure for camera data in shared memory.
  */
 struct ShmRingBuffer {
-    static constexpr int BUFFER_SIZE = 5; ///< Number of frames to buffer
+    static constexpr int BUFFER_SIZE = 10; ///< Number of frames to buffer (must be even for stereo)
     int write_idx;                        ///< Current write index
     int read_idx;                         ///< Current read index
     CameraDataPacket packets[BUFFER_SIZE]; ///< Array of camera data packets

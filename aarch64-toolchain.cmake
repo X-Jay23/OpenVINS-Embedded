@@ -6,6 +6,9 @@ set(CMAKE_SYSTEM_PROCESSOR aarch64)
 set(CMAKE_C_COMPILER aarch64-linux-gnu-gcc)
 set(CMAKE_CXX_COMPILER aarch64-linux-gnu-g++)
 
+# 优化
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -mcpu=cortex-a55 -ffast-math")
+
 # 定义 Sysroot 路径
 set(RK3568_SYSROOT /home/jay/rk3568_workspace/sysroot)
 set(CMAKE_SYSROOT ${RK3568_SYSROOT})

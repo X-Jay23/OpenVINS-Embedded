@@ -90,35 +90,63 @@ def plot_metrics(log_dir, traj_file, gt_file, ate, rpe):
         # Plot 1: Resources Monitor
         if os.path.exists(resource_file):
             df = pd.read_csv(resource_file)
-            fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
             
-            axs[0].plot(df['timestamp'], df['cpu_percent'], color='b', label='CPU Usage (%)')
+            # Detect available columns
+            core_cols = sorted([c for c in df.columns if c.startswith('cpu_') and c != 'cpu_total' and c != 'cpu_percent'])
+            cpu_main_col = 'cpu_total' if 'cpu_total' in df.columns else 'cpu_percent'
+            
+            num_plots = 4 if core_cols else 3
+            fig, axs = plt.subplots(num_plots, 1, figsize=(10, 4 * num_plots), sharex=True)
+            
+            # Subplot 0: System and Process CPU
+            axs[0].plot(df['timestamp'], df[cpu_main_col], color='black', linewidth=1.5, label='Total System CPU')
+            if 'vins_cpu' in df.columns:
+                axs[0].plot(df['timestamp'], df['vins_cpu'], label='VINS Process', alpha=0.8)
+            if 'cam_cpu' in df.columns:
+                axs[0].plot(df['timestamp'], df['cam_cpu'], label='Camera Process', alpha=0.8)
+            if 'imu_cpu' in df.columns:
+                axs[0].plot(df['timestamp'], df['imu_cpu'], label='IMU Process', alpha=0.8)
+            
             axs[0].set_ylabel('CPU (%)')
-            axs[0].legend()
-            axs[0].grid(True)
-            axs[0].set_title('System CPU Utilization')
+            axs[0].legend(loc='upper right', fontsize='small', ncol=2)
+            axs[0].grid(True, alpha=0.3)
+            axs[0].set_title('CPU Utilization (System & Components)')
+
+            # Subplot 1: Per-Core CPU (if available)
+            plot_idx = 1
+            if core_cols:
+                for col in core_cols:
+                    axs[plot_idx].plot(df['timestamp'], df[col], label=col, alpha=0.7)
+                axs[plot_idx].set_ylabel('CPU (%)')
+                axs[plot_idx].legend(loc='upper right', fontsize='x-small', ncol=min(4, len(core_cols)))
+                axs[plot_idx].grid(True, alpha=0.3)
+                axs[plot_idx].set_title('Per-Core CPU Utilization')
+                plot_idx += 1
+
+            # Subplot: Memory
+            axs[plot_idx].plot(df['timestamp'], df['mem_mb'], color='g', label='VINS Mem (MB)')
+            axs[plot_idx].set_ylabel('Memory (MB)')
+            axs[plot_idx].legend(loc='upper right')
+            axs[plot_idx].grid(True, alpha=0.3)
+            axs[plot_idx].set_title('VINS Process Memory (RSS)')
+            plot_idx += 1
             
-            axs[1].plot(df['timestamp'], df['mem_mb'], color='g', label='VINS Mem (MB)')
-            axs[1].set_ylabel('Memory (MB)')
-            axs[1].legend()
-            axs[1].grid(True)
-            axs[1].set_title('VINS Process Memory (RSS)')
+            # Subplot: Temp and Freq
+            axs[plot_idx].plot(df['timestamp'], df['temp'], color='r', label='Temp (°C)')
+            axs[plot_idx].set_ylabel('Temperature (°C)', color='r')
+            axs[plot_idx].tick_params(axis='y', labelcolor='r')
             
-            axs[2].plot(df['timestamp'], df['temp'], color='r', label='Temp (°C)')
-            axs[2].set_ylabel('Temperature (°C)', color='r')
-            axs[2].tick_params(axis='y', labelcolor='r')
-            
-            ax2_freq = axs[2].twinx()
+            ax2_freq = axs[plot_idx].twinx()
             ax2_freq.plot(df['timestamp'], df['freq_mhz'], color='orange', linestyle='--', label='Freq (MHz)')
             ax2_freq.set_ylabel('Frequency (MHz)', color='orange')
             ax2_freq.tick_params(axis='y', labelcolor='orange')
             
-            lines, labels = axs[2].get_legend_handles_labels()
+            lines, labels = axs[plot_idx].get_legend_handles_labels()
             lines2, labels2 = ax2_freq.get_legend_handles_labels()
-            ax2_freq.legend(lines + lines2, labels + labels2, loc=0)
-            axs[2].grid(True)
-            axs[2].set_xlabel('Time (s)')
-            axs[2].set_title('CPU Temperature and Frequency')
+            ax2_freq.legend(lines + lines2, labels + labels2, loc='upper right', fontsize='small')
+            axs[plot_idx].grid(True, alpha=0.3)
+            axs[plot_idx].set_xlabel('Time (s)')
+            axs[plot_idx].set_title('CPU Temperature and Frequency')
             
             plt.tight_layout()
             pdf.savefig(fig)

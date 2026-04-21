@@ -79,52 +79,102 @@ def get_temp():
 
     return 0.0
 
+def find_process_by_name(name):
+    try:
+        for proc in psutil.process_iter(['name']):
+            if proc.info['name'] == name:
+                return proc
+    except Exception:
+        pass
+    return None
+
 def monitor(pid, log_file, interval=0.5):
     try:
-        process = psutil.Process(pid)
+        vins_process = psutil.Process(pid)
     except psutil.NoSuchProcess:
-        print(f"[Resource Monitor] Process {pid} not found.")
+        print(f"[Resource Monitor] VINS Process {pid} not found.")
         sys.exit(1)
+
+    cam_process = None
+    imu_process = None
 
     print(f"[Resource Monitor] Started monitoring PID {pid}")
     
     with open(log_file, 'w', newline='') as csvfile:
-        fieldnames = ['timestamp', 'cpu_percent', 'mem_mb', 'temp', 'freq_mhz']
+        # Basic fields
+        fieldnames = ['timestamp', 'cpu_total']
+        
+        # Add dynamic core fields
+        num_cores = psutil.cpu_count()
+        for i in range(num_cores):
+            fieldnames.append(f'cpu_{i}')
+            
+        fieldnames.extend(['vins_cpu', 'cam_cpu', 'imu_cpu', 'mem_mb', 'temp', 'freq_mhz'])
+        
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
 
         start_time = time.time()
         
+        # Initial call to cpu_percent to initialize counters
+        psutil.cpu_percent(percpu=True)
+        vins_process.cpu_percent()
+        
         while True:
             try:
-                # Check if process is still running
-                if not process.is_running() or process.status() == psutil.STATUS_ZOMBIE:
+                # Check if main process is still running
+                if not vins_process.is_running() or vins_process.status() == psutil.STATUS_ZOMBIE:
                     break
 
+                # Try to find accessory processes if not found yet
+                if cam_process is None or not cam_process.is_running():
+                    cam_process = find_process_by_name("camera_process")
+                if imu_process is None or not imu_process.is_running():
+                    imu_process = find_process_by_name("imu_process")
+
                 current_time = time.time() - start_time
-                cpu_percent = psutil.cpu_percent(interval=None) # Non-blocking whole system CPU
-                mem_info = process.memory_info()
-                mem_mb = mem_info.rss / (1024 * 1024)
+                
+                # Utilization data
+                cpu_total = psutil.cpu_percent(interval=None)
+                per_cpu = psutil.cpu_percent(interval=None, percpu=True)
+                
+                vins_cpu = vins_process.cpu_percent()
+                cam_cpu = cam_process.cpu_percent() if cam_process else 0.0
+                imu_cpu = imu_process.cpu_percent() if imu_process else 0.0
+                
+                mem_mb = vins_process.memory_info().rss / (1024 * 1024)
                 temp = get_temp()
                 freq = get_cpu_freq()
 
-                writer.writerow({
+                row = {
                     'timestamp': f"{current_time:.3f}",
-                    'cpu_percent': f"{cpu_percent:.2f}",
+                    'cpu_total': f"{cpu_total:.2f}",
+                    'vins_cpu': f"{vins_cpu:.2f}",
+                    'cam_cpu': f"{cam_cpu:.2f}",
+                    'imu_cpu': f"{imu_cpu:.2f}",
                     'mem_mb': f"{mem_mb:.2f}",
                     'temp': f"{temp:.1f}",
                     'freq_mhz': f"{freq:.0f}"
-                })
+                }
+                
+                # Add per-core data to row
+                for i, val in enumerate(per_cpu):
+                    if i < num_cores:
+                        row[f'cpu_{i}'] = f"{val:.2f}"
+
+                writer.writerow(row)
                 csvfile.flush()
                 
                 time.sleep(interval)
                 
-            except psutil.NoSuchProcess:
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
                 break
             except KeyboardInterrupt:
                 break
             except Exception as e:
                 print(f"[Resource Monitor] Error: {e}")
+                import traceback
+                traceback.print_exc()
                 break
 
     print(f"[Resource Monitor] Stopped monitoring PID {pid}")

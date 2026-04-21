@@ -12,7 +12,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Enable optimizations
 set(CMAKE_BUILD_TYPE Release)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native")
 
 # Dependencies
 find_package(Eigen3 REQUIRED)

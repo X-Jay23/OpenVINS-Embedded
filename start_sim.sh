@@ -1,81 +1,125 @@
 #!/bin/bash
-# start_sim.sh: 一键启动脚本
+# start_sim.sh: One-key simulation script for OpenVINS (ROS-free version)
 
-# 1. 路径配置
-PROJECT_ROOT="/home/jay/Project/openvins"
+# =================================================================
+# USER CONFIGURATION
+# =================================================================
+
+# Path to the project root (Auto-detected by default)
+PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+
+# Path to the estimator configuration YAML
 CONFIG_PATH="$PROJECT_ROOT/config/euroc_mav/estimator_config.yaml"
-DATASET_PATH="/home/jay/Project/dataset/vicon_room1/V1_01_easy/V1_01_easy/mav0"
-GT_PATH="$PROJECT_ROOT/groundtruth/V1_01_easy/data.csv"
 
-# 2. 创建带时间戳的日志目录
-LOG_DIR="$PROJECT_ROOT/logs/sim_$(date +%Y%m%d_%H%M%S)"
-mkdir -p "$LOG_DIR"
-echo "[Sim] 日志目录: $LOG_DIR"
+# Path to the EuRoC MAV dataset (mav0 folder)
+DATASET_PATH="$PROJECT_ROOT/dataset/euroc_mav/V1_01_easy/mav0"
 
-# 3. 编译工程
-echo "[Sim] 正在编译工程..."
-mkdir -p "$PROJECT_ROOT/build"
-cd "$PROJECT_ROOT/build"
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+# Path to the groundtruth CSV (Optional, set empty to skip evaluation)
+GT_PATH="$PROJECT_ROOT/groundtruth/euroc_mav/V1_01_easy/data.csv"
 
-if [ $? -ne 0 ]; then
-    echo "[Error] 编译失败！"
+# Whether to rebuild the project before running (true/false)
+REBUILD=true
+
+# =================================================================
+# INTERNAL LOGIC (Do not modify unless needed)
+# =================================================================
+
+# ANSI Color codes for prettier output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN}    🚀 OpenVINS Simulation Automator       ${NC}"
+echo -e "${GREEN}============================================${NC}"
+
+# 1. Path Validation
+if [ ! -d "$DATASET_PATH" ]; then
+    echo -e "${RED}[Error] Dataset path not found: $DATASET_PATH${NC}"
     exit 1
 fi
 
-# 4. 清理旧的 IPC 资源 (以防万一)
-echo "[Sim] 清理 IPC 资源..."
+if [ ! -f "$CONFIG_PATH" ]; then
+    echo -e "${RED}[Error] Config file not found: $CONFIG_PATH${NC}"
+    exit 1
+fi
+
+# 2. Build Project
+if [ "$REBUILD" = true ]; then
+    echo -e "${YELLOW}[Sim] Compiling project...${NC}"
+    mkdir -p "$PROJECT_ROOT/build"
+    cd "$PROJECT_ROOT/build"
+    cmake .. -DCMAKE_BUILD_TYPE=Release
+    make -j$(nproc)
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}[Error] Compilation failed!${NC}"
+        exit 1
+    fi
+    cd "$PROJECT_ROOT"
+fi
+
+# 3. Prepare Logs
+LOG_DIR="$PROJECT_ROOT/logs/sim_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$LOG_DIR"
+echo -e "${YELLOW}[Sim] Logs will be saved to: $LOG_DIR${NC}"
+
+# 4. Cleanup IPC Resources (Shared Memory / Message Queues)
+echo -e "${YELLOW}[Sim] Cleaning up IPC resources...${NC}"
 rm -f /dev/mqueue/vins_imu_mq
 rm -f /dev/shm/vins_cam_shm
 rm -f /dev/shm/sem.vins_cam_sem
 rm -f /tmp/vins_ready
 
-# 5. 启动主进程 (vins)
-echo "[Sim] 启动 VINS 主进程..."
+# 5. Start VINS Core Process
+echo -e "${GREEN}[Sim] Starting VINS process...${NC}"
+cd "$PROJECT_ROOT/build"
 ./vins "$CONFIG_PATH" "$LOG_DIR" &
 VINS_PID=$!
 
-# 等待主进程就绪
-sleep 5
+# Wait for system to initialize IPC
+sleep 3
 
-# 6. 启动资源监测脚本
-echo "[Sim] 启动资源监测 (PID=$VINS_PID)..."
-python3 "$PROJECT_ROOT/scripts/resource_monitor.py" $VINS_PID "$LOG_DIR/resource.csv" &
-MONITOR_PID=$!
+# 6. Start Resource Monitor
+if [ -f "$PROJECT_ROOT/scripts/resource_monitor.py" ]; then
+    echo -e "${YELLOW}[Sim] Starting resource monitor (PID=$VINS_PID)...${NC}"
+    python3 "$PROJECT_ROOT/scripts/resource_monitor.py" $VINS_PID "$LOG_DIR/resource.csv" &
+    MONITOR_PID=$!
+fi
 
-sleep 10
-
-# 7. 启动 IMU 进程和相机进程
-echo "[Sim] 启动 IMU 进程和相机进程..."
-# IMU 进程通常比相机进程早启动一点
+# 7. Start Data Producers (IMU & Camera)
+echo -e "${GREEN}[Sim] Feeding dataset measurements...${NC}"
 ./imu_process "$DATASET_PATH" &
 IMU_PID=$!
 
-sleep 0.5 # 延迟 500ms 启动相机进程
-
+sleep 0.1 # Small delay for synchronization
 ./camera_process "$DATASET_PATH" &
 CAM_PID=$!
 
-# 8. 等待数据进程结束
-echo "[Sim] 模拟运行中... (按 Ctrl+C 停止)"
+# 8. Wait for completion
+echo -e "${YELLOW}[Sim] Simulation running. Press Ctrl+C to stop manually.${NC}"
 wait $IMU_PID
 wait $CAM_PID
 
-echo "[Sim] 数据读取完毕，正在关闭主进程..."
+echo -e "${YELLOW}[Sim] Data stream finished. Shutting down VINS...${NC}"
 kill -SIGINT $VINS_PID
+wait $VINS_PID 2>/dev/null
 
-# 等待主进程退出
-sleep 10
+# 9. Cleanup Monitor
+if [ ! -z "$MONITOR_PID" ]; then
+    kill -SIGTERM $MONITOR_PID 2>/dev/null
+    wait $MONITOR_PID 2>/dev/null
+fi
 
-# 9. 停止资源监测
-echo "[Sim] 停止资源监测..."
-kill -SIGTERM $MONITOR_PID 2>/dev/null
-wait $MONITOR_PID 2>/dev/null
+# 10. Trajectory Evaluation
+if [ -n "$GT_PATH" ] && [ -f "$GT_PATH" ]; then
+    echo -e "${GREEN}[Sim] Calculating accuracy metrics...${NC}"
+    python3 "$PROJECT_ROOT/scripts/evaluate_and_plot.py" "$LOG_DIR" "$GT_PATH"
+else
+    echo -e "${YELLOW}[Sim] Ground truth not provided or not found, skipping evaluation.${NC}"
+fi
 
-# 10. 精度评估与绘图 
-echo "[Sim] 计算轨迹精度并生成图表..."
-python3 "$PROJECT_ROOT/scripts/evaluate_and_plot.py" "$LOG_DIR" "$GT_PATH"
-
-echo ""
-echo "[Sim] 仿真任务圆满结束。报告保存在: $LOG_DIR"
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN} ✅ Simulation Complete! ${NC}"
+echo -e "${GREEN} Logs & Results: $LOG_DIR ${NC}"
+echo -e "${GREEN}============================================${NC}"

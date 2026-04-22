@@ -9,4 +9,5 @@ doxgen_generated
 doc
 .vscode
 logs
+dataset
 groundtruth

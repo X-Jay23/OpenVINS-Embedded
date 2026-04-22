@@ -25,22 +25,22 @@ add_definitions(-DENABLE_ARUCO_TAGS=0)
 
 # Include directories
 include_directories(
-    src
-    src/ov_core/src
-    src/ov_init/src
-    src/ov_msckf/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/ov_core/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/ov_init/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/core/ov_msckf/src
     ${EIGEN3_INCLUDE_DIR}
     ${Boost_INCLUDE_DIRS}
     ${YAML_CPP_INCLUDE_DIR}
 )
 
 # Subdirectories for libraries
-add_subdirectory(src/ov_core)
-add_subdirectory(src/ov_init)
-add_subdirectory(src/ov_msckf)
+add_subdirectory(core/ov_core)
+add_subdirectory(core/ov_init)
+add_subdirectory(core/ov_msckf)
 
 # --- VINS Main Process ---
-add_executable(vins src/vins_process/main.cpp)
+add_executable(vins apps/vins/main.cpp)
 target_link_libraries(vins
     ov_msckf_lib
     ov_init_lib
@@ -52,7 +52,7 @@ target_link_libraries(vins
 )
 
 # --- IMU Process ---
-add_executable(imu_process src/imu_process/main.cpp)
+add_executable(imu_process apps/imu/main.cpp)
 target_link_libraries(imu_process
     ${OpenCV_LIBRARIES}
     pthread
@@ -60,9 +60,21 @@ target_link_libraries(imu_process
 )
 
 # --- Camera Process ---
-add_executable(camera_process src/camera_process/main.cpp)
+add_executable(camera_process apps/camera/main.cpp)
 target_link_libraries(camera_process
     ${OpenCV_LIBRARIES}
+    pthread
+    rt
+)
+
+# --- Standalone Simulation ---
+add_executable(vins_sim apps/vins/vins_sim.cpp)
+target_link_libraries(vins_sim
+    ov_msckf_lib
+    ov_init_lib
+    ov_core_lib
+    ${OpenCV_LIBRARIES}
+    ${Boost_LIBRARIES}
     pthread
     rt
 )

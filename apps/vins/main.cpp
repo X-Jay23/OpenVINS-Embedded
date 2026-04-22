@@ -8,10 +8,10 @@
 #include <semaphore.h>
 #include <thread>
 
-#include "../common/DataTypes.h"
-#include "../common/IpcManager.h"
-#include "../common/ThreadSafeQueue.h"
-#include "../common/PerformanceLogger.h"
+#include "DataTypes.h"
+#include "IpcManager.h"
+#include "ThreadSafeQueue.h"
+#include "PerformanceLogger.h"
 #include "core/VioManager.h"
 #include "core/VioManagerOptions.h"
 #include "state/State.h"

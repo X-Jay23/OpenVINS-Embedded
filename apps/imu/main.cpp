@@ -10,9 +10,9 @@
 #include <thread>
 #include <vector>
 
-#include "../EuRoCDataLoader.h"
-#include "../common/DataTypes.h"
-#include "../common/IpcManager.h"
+#include "EuRoCDataLoader.h"
+#include "DataTypes.h"
+#include "IpcManager.h"
 
 using namespace std;
 using namespace ov_core;

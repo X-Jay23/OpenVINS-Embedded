@@ -1,19 +1,16 @@
 # OpenVINS-Embedded
 
-[![Build Status](https://github.com/your-username/openvins-embedded/actions/workflows/build.yml/badge.svg)](https://github.com/your-username/openvins-embedded/actions)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-
 **OpenVINS-Embedded** is a high-performance, ROS-free fork of the [OpenVINS](https://github.com/rpng/open_vins) project. It is specifically refactored to run on resource-constrained embedded platforms (such as the Rockchip RK3568) by removing heavy middleware dependencies while maintaining state-of-the-art visual-inertial estimation accuracy.
 
 ---
 
 ## Key Features
 
-1.  **ROS-Free Architecture**: Stripped of all ROS/ROS2 dependencies. Built with pure C++17 and standard CMake.
-2.  **Embedded Optimization**: Tailored for ARM-based SoC (e.g., RK3568). Supports manual CPU pinning and performance-mode optimizations.
-3.  **Modular Process Design**: Separates data acquisition (Camera/IMU processes) from the core estimation engine using high-speed IPC (Shared Memory & Message Queues).
-4.  **Standalone Simulation**: Includes a built-in simulation runner that pumps data from EuRoC datasets for rapid algorithm verification.
-5.  **Low Latency**: Optimized data pipeline for real-time performance on low-power hardware.
+1.  **ROS-Free Architecture**: Completely stripped of all ROS/ROS2 dependencies. Built with pure C++17 and standard CMake.
+2.  **IPC-Based Simulation**: Replaces the bulky `rosbag play` mechanism with a lightweight Inter-Process Communication (IPC) architecture. Producer processes simulate real-time sensor streams, delivering data directly to the estimator core.
+3.  **High-Efficiency Camera Process**:
+    *   **Shared Memory**: Implements a zero-copy circular buffer in Shared Memory, avoiding the heavy serialization and memory copies found in ROS.
+    *   **Direct Decoding**: Images are decoded directly into IPC buffers, bypassing standard filesystem overhead during simulation.
 
 ---
 
@@ -23,7 +20,7 @@ The project employs a multi-process architecture to ensure timing stability and 
 
 *   **Data Producers**: Independent processes for Camera (Shared Memory) and IMU (Message Queues).
 *   **VINS Core**: The main estimator node that consumes IPC data and produces pose estimates.
-*   **Evaluation**: Integrated Python scripts for ATE/RPE calculation and resource utilization plotting.
+*   **Evaluation**: Integrated Python scripts for ATE calculation and resource utilization plotting.
 
 ---
 
@@ -45,7 +42,6 @@ openvins-embedded/
 │   └── EuRoCDataLoader.h # Dataset parser
 ├── config/             # YAML sensor and estimator configurations
 ├── scripts/            # Python tools for evaluation & resource monitoring
-├── logs/               # Generated trajectories and performance reports
 ├── start_sim.sh        # One-key simulation & evaluation script
 └── CMakeLists.txt      # Master build configuration
 ```
@@ -54,12 +50,23 @@ openvins-embedded/
 
 ## Performance Benchmarks
 
-Tested on the EuRoC MAV dataset (V1_01_easy).
+### Environment
 
-| Platform | Processor | OS | Avg. Latency / Frame |
-| :--- | :--- | :--- | :--- |
-| **Desktop Host** | Intel i7-11700KF | Ubuntu 22.04 | **~9.4 ms** (>100 FPS) |
-| **Embedded Board** | Rockchip RK3568 | Debian 12 | **~25-35 ms** (Real-time) |
+*   **OS**: Ubuntu 22.04 LTS
+*   **CPU**: 11th Gen Intel(R) Core(TM) i7-11700KF @ 3.60GHz
+*   **RAM**: 32GB
+*   **Build Type**: Release (-O3, -march=native)
+*   **Dataset**: EuRoC MAV dataset (V1_02_medium)
+
+
+| Metric                 | Original OpenVINS | Modified OpenVINS | Improvement |
+| :--------------------- | :---------------- | :---------------- | :---------- |
+| Avg Frame Time         | 15.79 ms          | 12.84 ms          | +18.68%     |
+| Avg CPU Usage (Irix)   | 46.65 %           | 37.56 %           | +19.48%     |
+| Avg RSS Memory         | 161.42 MB         | 78.40 MB          | +51.43%     |
+| Mean ATE (Translation) | 0.0806 m          | 0.0646 m          | +19.95%     |
+
+
 
 ---
 
@@ -97,7 +104,7 @@ To run a simulation using the EuRoC dataset:
 ## Future Work
 
 *   [ ] Integration of hardware-accelerated feature extraction (using RK3568 RGA/NPU).
-*   [ ] Support for live camera/IMU streams via V4L2 and SPI/I2C.
+*   [ ] Support for live camera/IMU streams via V4L2 and IIC.
 *   [ ] Real-world flight testing on RK3568-based drones.
 
 ---

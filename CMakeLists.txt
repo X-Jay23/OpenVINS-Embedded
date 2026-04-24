@@ -67,14 +67,3 @@ target_link_libraries(camera_process
     rt
 )
 
-# --- Standalone Simulation ---
-add_executable(vins_sim apps/vins/vins_sim.cpp)
-target_link_libraries(vins_sim
-    ov_msckf_lib
-    ov_init_lib
-    ov_core_lib
-    ${OpenCV_LIBRARIES}
-    ${Boost_LIBRARIES}
-    pthread
-    rt
-)

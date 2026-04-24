@@ -2,7 +2,7 @@
 
 **OpenVINS-Embedded** is a high-performance, ROS-free fork of the [OpenVINS](https://github.com/rpng/open_vins) project. It is specifically refactored to run on resource-constrained embedded platforms (such as the Rockchip RK3568) by removing heavy middleware dependencies while maintaining state-of-the-art visual-inertial estimation accuracy.
 
----
+
 
 ## Key Features
 
@@ -12,7 +12,7 @@
     *   **Shared Memory**: Implements a zero-copy circular buffer in Shared Memory, avoiding the heavy serialization and memory copies found in ROS.
     *   **Direct Decoding**: Images are decoded directly into IPC buffers, bypassing standard filesystem overhead during simulation.
 
----
+
 
 ## System Architecture
 
@@ -22,7 +22,7 @@ The project employs a multi-process architecture to ensure timing stability and 
 *   **VINS Core**: The main estimator node that consumes IPC data and produces pose estimates.
 *   **Evaluation**: Integrated Python scripts for ATE calculation and resource utilization plotting.
 
----
+
 
 ## Project Structure
 
@@ -46,7 +46,7 @@ openvins-embedded/
 └── CMakeLists.txt      # Master build configuration
 ```
 
----
+
 
 ## Performance Benchmarks
 
@@ -68,7 +68,7 @@ openvins-embedded/
 
 
 
----
+
 
 ## Prerequisites & Installation
 
@@ -86,7 +86,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
----
+
 
 ## Quick Start
 
@@ -99,7 +99,7 @@ To run a simulation using the EuRoC dataset:
     ```
 3.  The script will automatically compile the code, run the simulation, monitor system resources, and generate a PDF performance report in the `logs/` directory.
 
----
+
 
 ## Future Work
 
@@ -107,7 +107,7 @@ To run a simulation using the EuRoC dataset:
 *   [ ] Support for live camera/IMU streams via V4L2 and IIC.
 *   [ ] Real-world flight testing on RK3568-based drones.
 
----
+
 
 ## Credits & License
 

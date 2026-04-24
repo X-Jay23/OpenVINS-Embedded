@@ -2,6 +2,11 @@
 
 **OpenVINS-Embedded** is a high-performance, ROS-free fork of the [OpenVINS](https://github.com/rpng/open_vins) project. It is specifically refactored to run on resource-constrained embedded platforms (such as the Rockchip RK3568) by removing heavy middleware dependencies while maintaining state-of-the-art visual-inertial estimation accuracy.
 
+## Branch Overview
+
+*   **master**: Main branch optimized for Linux x86 desktop simulation and general development.
+*   **dev_rk3568**: Active development branch focusing on **Rockchip RK3568** hardware optimizations.
+
 
 
 ## Key Features
